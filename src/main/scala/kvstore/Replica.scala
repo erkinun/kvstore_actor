@@ -77,6 +77,10 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
             kv = kv + (key -> str)
             expected = expected + 1
             sender ! SnapshotAck(key, seq)
+          case None =>
+            kv = kv - key
+            expected = expected + 1
+            sender ! SnapshotAck(key, seq)
         }
       }
       else println("ignoring seq bigger than expected")
