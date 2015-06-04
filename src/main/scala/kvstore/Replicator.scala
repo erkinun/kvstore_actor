@@ -3,6 +3,7 @@ package kvstore
 import akka.actor.Props
 import akka.actor.Actor
 import akka.actor.ActorRef
+import akka.persistence.AtLeastOnceDelivery
 import scala.concurrent.duration._
 
 object Replicator {
@@ -15,7 +16,7 @@ object Replicator {
   def props(replica: ActorRef): Props = Props(new Replicator(replica))
 }
 
-class Replicator(val replica: ActorRef) extends Actor {
+class Replicator(val replica: ActorRef) extends Actor with AtLeastOnceDelivery {
   import Replicator._
   import Replica._
   import context.dispatcher
@@ -39,6 +40,15 @@ class Replicator(val replica: ActorRef) extends Actor {
   
   /* TODO Behavior for the Replicator. */
   def receive: Receive = {
+    case Replicate(key, valueOption, id) =>
+      val seq = nextSeq
+      acks = acks + (seq -> (sender(), Replicate(key, valueOption, id)))
+      deliver(replica.path, seq => Snapshot(key, valueOption, seq))
+    case SnapshotAck(key, seqReturn) =>
+      confirmDelivery(seqReturn)
+      val tup = acks(seqReturn)
+      acks = acks - seqReturn
+      tup._1 ! Replicated(key, tup._2.id)
     case _ =>
   }
 
