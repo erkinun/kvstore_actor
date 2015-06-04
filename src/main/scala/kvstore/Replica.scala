@@ -1,16 +1,12 @@
 package kvstore
 
-import akka.actor.{ OneForOneStrategy, Props, ActorRef, Actor }
+import akka.actor._
 import kvstore.Arbiter._
 import scala.collection.immutable.Queue
 import akka.actor.SupervisorStrategy.Restart
 import scala.annotation.tailrec
 import akka.pattern.{ ask, pipe }
-import akka.actor.Terminated
 import scala.concurrent.duration._
-import akka.actor.PoisonPill
-import akka.actor.OneForOneStrategy
-import akka.actor.SupervisorStrategy
 import akka.util.Timeout
 
 object Replica {
@@ -36,6 +32,8 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   import Persistence._
   import context.dispatcher
 
+  context.setReceiveTimeout(1.seconds)
+
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
    */
@@ -54,7 +52,15 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   /* TODO Behavior for  the leader role. */
   val leader: Receive = {
-    case _ =>
+    case Insert(key, value, id) =>
+      kv = kv + (key -> value)
+      sender ! OperationAck(id) // will need to handle all stuff
+    case Remove(key, id) =>
+      kv = kv - key
+      sender ! OperationAck(id)
+    case Get(key, id) => sender ! GetResult(key, kv.get(key), id)
+    case ReceiveTimeout => ???
+    case _ => ???
   }
 
   /* TODO Behavior for the replica role. */
