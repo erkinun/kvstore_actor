@@ -32,7 +32,13 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   import Persistence._
   import context.dispatcher
 
+  var persistActor = context.actorOf(persistenceProps)
   context.setReceiveTimeout(1.seconds)
+  context.system.scheduler.schedule(1.second, 1.second, self, Timeout)
+
+  override val supervisorStrategy = OneForOneStrategy() {
+    case _ : PersistenceException => Restart
+  }
 
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
@@ -44,6 +50,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   // the current set of replicators
   var replicators = Set.empty[ActorRef]
   var expected: Long = 0
+  var persistMsgs = Map.empty[Long, Persist]
 
   def receive = {
     case JoinedPrimary   => context.become(leader)
@@ -70,6 +77,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       if (seq < expected) {
         expected = seq + 1
         sender ! SnapshotAck(key, seq)
+        sendPersistMsg(key, valueOption, seq)
       }
       else if (seq == expected) {
         valueOption match {
@@ -82,10 +90,19 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
             expected = expected + 1
             sender ! SnapshotAck(key, seq)
         }
+        sendPersistMsg(key, valueOption, seq)
       }
       else println("ignoring seq bigger than expected")
+    case Persisted(key, id) => persistMsgs = persistMsgs - id
+    case Timeout => //send waiting msgs to persist actor
+      persistMsgs foreach (msg => persistActor ! msg._2)
     case _ =>
   }
 
+  def sendPersistMsg(key: String, valueOption: Option[String], seq: Long): Unit = {
+    val msg = Persist(key, valueOption, seq)
+    persistMsgs = persistMsgs + (seq -> msg)
+    persistActor ! msg
+  }
 }
 
