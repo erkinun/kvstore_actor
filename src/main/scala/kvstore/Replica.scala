@@ -50,7 +50,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   // the current set of replicators
   var replicators = Set.empty[ActorRef]
   var expected: Long = 0
-  var persistMsgs = Map.empty[Long, Persist]
+  var persistMsgs = Map.empty[Long, (ActorRef, Persist)]
 
   //im ready pick me up
   arbiter ! Join
@@ -79,32 +79,36 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case Snapshot(key, valueOption, seq) =>
       if (seq < expected) {
         expected = seq + 1
-        sender ! SnapshotAck(key, seq)
-        sendPersistMsg(key, valueOption, seq)
+        //sender ! SnapshotAck(key, seq)
+        sendPersistMsg(sender, key, valueOption, seq)
       }
       else if (seq == expected) {
         valueOption match {
           case Some(str) =>
             kv = kv + (key -> str)
             expected = expected + 1
-            sender ! SnapshotAck(key, seq)
+            //sender ! SnapshotAck(key, seq)
           case None =>
             kv = kv - key
             expected = expected + 1
-            sender ! SnapshotAck(key, seq)
+            //sender ! SnapshotAck(key, seq)
         }
-        sendPersistMsg(key, valueOption, seq)
+        sendPersistMsg(sender, key, valueOption, seq)
       }
       else println("ignoring seq bigger than expected")
-    case Persisted(key, id) => persistMsgs = persistMsgs - id
+    case Persisted(key, id) =>
+      val msg = persistMsgs(id)
+      msg._1 ! SnapshotAck(key, id)
+      persistMsgs = persistMsgs - id
+
     case Timeout => //send waiting msgs to persist actor
-      persistMsgs foreach (msg => persistActor ! msg._2)
+      persistMsgs foreach (msg => persistActor ! msg._2._2)
     case _ =>
   }
 
-  def sendPersistMsg(key: String, valueOption: Option[String], seq: Long): Unit = {
+  def sendPersistMsg(sender: ActorRef, key: String, valueOption: Option[String], seq: Long): Unit = {
     val msg = Persist(key, valueOption, seq)
-    persistMsgs = persistMsgs + (seq -> msg)
+    persistMsgs = persistMsgs + (seq -> (sender, msg))
     persistActor ! msg
   }
 }
