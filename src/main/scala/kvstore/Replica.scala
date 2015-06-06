@@ -34,7 +34,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   var persistActor = context.actorOf(persistenceProps)
   context.setReceiveTimeout(1.seconds)
-  context.system.scheduler.schedule(1.second, 1.second, self, Timeout)
+  context.system.scheduler.schedule(100.milliseconds, 100.milliseconds, self, Timeout)
 
   override val supervisorStrategy = OneForOneStrategy() {
     case _ : PersistenceException => Restart
