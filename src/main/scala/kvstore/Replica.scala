@@ -52,6 +52,9 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   var expected: Long = 0
   var persistMsgs = Map.empty[Long, Persist]
 
+  //im ready pick me up
+  arbiter ! Join
+
   def receive = {
     case JoinedPrimary   => context.become(leader)
     case JoinedSecondary => context.become(replica)
