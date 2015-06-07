@@ -33,7 +33,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   import context.dispatcher
 
   var persistActor = context.actorOf(persistenceProps)
-  context.setReceiveTimeout(1.seconds)
   context.system.scheduler.schedule(100.milliseconds, 100.milliseconds, self, Timeout)
 
   override val supervisorStrategy = OneForOneStrategy() {
@@ -51,6 +50,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   var replicators = Set.empty[ActorRef]
   var expected: Long = 0
   var persistMsgs = Map.empty[Long, (ActorRef, Persist)]
+  var lastMsgCouple: (Option[ActorRef], Long) = (None, 0L)
 
   //im ready pick me up
   arbiter ! Join
@@ -64,12 +64,32 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   val leader: Receive = {
     case Insert(key, value, id) =>
       kv = kv + (key -> value)
-      sender ! OperationAck(id) // will need to handle all stuff
+      //sender ! OperationAck(id) // will need to handle all stuff
+      sendPersistMsg(sender, key, Some(value), id)
+      context.setReceiveTimeout(1.seconds)
+      println("will wait 1 second for insert persistence")
+      lastMsgCouple = (Some(sender), id)
     case Remove(key, id) =>
       kv = kv - key
-      sender ! OperationAck(id)
+      //sender ! OperationAck(id)
+      sendPersistMsg(sender, key, None, id)
+      context.setReceiveTimeout(1.seconds)
+      println("will wait 1 second for remove persistence")
+      lastMsgCouple = (Some(sender), id)
     case Get(key, id) => sender ! GetResult(key, kv.get(key), id)
-    case ReceiveTimeout => ???
+    case Persisted(key, id) =>
+      val msg = persistMsgs(id)
+      msg._1 ! OperationAck(id)
+      persistMsgs = persistMsgs - id
+    case ReceiveTimeout => //Insert or Remove is not answered
+      println("received timeout for a msg")
+      lastMsgCouple._1 match {
+        case Some(sender) => sender ! OperationFailed(lastMsgCouple._2)
+        case None => //do nothing
+      }
+
+    case Timeout => //send waiting msgs to persist actor
+      persistMsgs foreach (msg => persistActor ! msg._2._2)
     case _ => ???
   }
 
@@ -79,7 +99,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case Snapshot(key, valueOption, seq) =>
       if (seq < expected) {
         expected = seq + 1
-        //sender ! SnapshotAck(key, seq)
         sendPersistMsg(sender, key, valueOption, seq)
       }
       else if (seq == expected) {
@@ -87,11 +106,9 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
           case Some(str) =>
             kv = kv + (key -> str)
             expected = expected + 1
-            //sender ! SnapshotAck(key, seq)
           case None =>
             kv = kv - key
             expected = expected + 1
-            //sender ! SnapshotAck(key, seq)
         }
         sendPersistMsg(sender, key, valueOption, seq)
       }
